@@ -1,12 +1,13 @@
-using LinearAlgebra: lu, ldiv!
-using OpenMDAO2
-using OpenMDAOCore: OpenMDAOCore
-using PythonCall
-using Test
+using SafeTestsets: @safetestset
 
-@testset "Explicit Components" begin
+@safetestset "Explicit Components" begin
 
-    @testset "simple" begin
+    @safetestset "simple" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
         struct ECompSimple <: OpenMDAOCore.AbstractExplicitComp end
 
         function OpenMDAOCore.setup(self::ECompSimple)
@@ -36,8 +37,6 @@ using Test
         p.run_model()
 
         # Check that the outputs are what we expect.
-        # expected = 2*PyArray(p.get_val("x"))[1]^2 + 1
-        # actual = PyArray(p.get_val("y"))[1]
         expected = 2 .* PyArray(p.get_val("x")).^2 .+ 1
         actual = PyArray(p.get_val("y"))
         @test actual ≈ expected
@@ -63,7 +62,12 @@ using Test
 
     end
 
-    @testset "with option" begin
+    @safetestset "with option" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
         struct ECompWithOption <: OpenMDAOCore.AbstractExplicitComp
             a::Float64
         end
@@ -121,7 +125,12 @@ using Test
 
     end
 
-    @testset "matrix-free" begin
+    @safetestset "matrix-free" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
         struct ECompMatrixFree <: OpenMDAOCore.AbstractExplicitComp
             nrows::Int
             ncols::Int
@@ -261,9 +270,14 @@ using Test
     end
 end
 
-@testset "Implicit Components" begin
+@safetestset "Implicit Components" begin
 
-    @testset "simple" begin
+    @safetestset "simple" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
 
         struct SimpleImplicit{TI,TF} <: OpenMDAOCore.AbstractImplicitComp
             n::TI  # these would be like "options" in openmdao
@@ -389,7 +403,12 @@ end
 
     end
 
-    @testset "solve nonlinear" begin
+    @safetestset "solve nonlinear" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
 
         struct SolveNonlinearImplicit{TI,TF} <: OpenMDAOCore.AbstractImplicitComp
             n::TI  # these would be like "options" in openmdao
@@ -525,7 +544,12 @@ end
 
     end
 
-    @testset "matrix-free" begin
+    @safetestset "matrix-free" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
 
         struct MatrixFreeImplicit{TI,TF} <: OpenMDAOCore.AbstractImplicitComp
             n::TI  # these would be like "options" in openmdao
@@ -715,7 +739,13 @@ end
 
     end
 
-    @testset "solve linear" begin
+    @safetestset "solve linear" begin
+        using LinearAlgebra: lu, ldiv!
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
         struct SolveLinearImplicit{TI,TF} <: OpenMDAOCore.AbstractImplicitComp
             n::TI  # these would be like "options" in openmdao
             a::TF
