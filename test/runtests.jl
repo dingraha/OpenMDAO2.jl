@@ -575,8 +575,7 @@ end
                 OpenMDAOCore.PartialsData("z1", "z1"; rows, cols),
                 OpenMDAOCore.PartialsData("z2", "x"; rows, cols),
                 OpenMDAOCore.PartialsData("z2", "y"; rows, cols),          
-                OpenMDAOCore.PartialsData("z2", "z2"; rows, cols)
-            ]
+                OpenMDAOCore.PartialsData("z2", "z2"; rows, cols)]
 
             return inputs, outputs, partials
         end
@@ -973,5 +972,138 @@ end
             end
         end
 
+    end
+
+    @safetestset "guess nonlinear" begin
+        using OpenMDAO2
+        using OpenMDAOCore: OpenMDAOCore
+        using PythonCall
+        using Test
+
+        struct GuessNonlinearImplicit{TI,TF} <: OpenMDAOCore.AbstractImplicitComp
+            n::TI  # these would be like "options" in openmdao
+            xguess::TF
+            xlower::TF
+            xupper::TF
+        end
+
+        function OpenMDAOCore.setup(self::GuessNonlinearImplicit)
+            n = self.n
+            xlower = self.xlower
+            xupper = self.xupper
+            inputs = [
+                OpenMDAOCore.VarData("a"; shape=n, val=[2.0]),
+                OpenMDAOCore.VarData("b"; shape=(n,), val=3.0),
+                OpenMDAOCore.VarData("c"; shape=(n,), val=3.0)]
+
+            outputs = [OpenMDAOCore.VarData("x"; shape=n, val=3.0, lower=xlower, upper=xupper)]
+
+            rows = 0:n-1
+            cols = 0:n-1
+            partials = [
+                OpenMDAOCore.PartialsData("x", "a"; rows=rows, cols=cols),
+                OpenMDAOCore.PartialsData("x", "b"; rows, cols),
+                OpenMDAOCore.PartialsData("x", "c"; rows, cols),
+                OpenMDAOCore.PartialsData("x", "x"; rows, cols),
+            ]
+
+            return inputs, outputs, partials
+        end
+
+        function OpenMDAOCore.apply_nonlinear!(self::GuessNonlinearImplicit, inputs, outputs, residuals)
+            a = inputs["a"]
+            b = inputs["b"]
+            c = inputs["c"]
+            x = outputs["x"]
+            Rx = residuals["x"]
+
+            @. Rx = a*x^2 + b*x + c
+
+            return nothing
+        end
+
+        function OpenMDAOCore.linearize!(self::GuessNonlinearImplicit, inputs, outputs, partials)
+            a = inputs["a"]
+            b = inputs["b"]
+            c = inputs["c"]
+            x = outputs["x"]
+
+            dRx_da = partials["x", "a"]
+            dRx_db = partials["x", "b"]
+            dRx_dc = partials["x", "c"]
+            dRx_dx = partials["x", "x"]
+
+            @. dRx_da = x^2
+            @. dRx_db = x
+            @. dRx_dc = 1
+            @. dRx_dx = 2*a*x + b
+
+            return nothing
+        end
+
+        function OpenMDAOCore.guess_nonlinear!(self::GuessNonlinearImplicit, inputs, outputs, residuals)
+            @. outputs["x"] = self.xguess
+            return nothing
+        end
+
+        n = 9
+
+        # Create a component that should find the left root of R(x) = x**2 - 4*x + 3 = (x - 1)*(x - 3) = 0, aka 1.
+        # (x - 1)*(x - 3)
+        xguess = 1.5
+        xlower = -10.0
+        xupper = 1.9
+        p_leftroot = om.Problem()
+        icomp = GuessNonlinearImplicit(n, xguess, xlower, xupper)
+        comp = make_component(icomp)
+        comp.linear_solver = om.DirectSolver(assemble_jac=true)
+        comp.nonlinear_solver = om.NewtonSolver(solve_subsystems=true, iprint=2, err_on_non_converge=true)
+        comp.nonlinear_solver.linesearch = om.BoundsEnforceLS(bound_enforcement="scalar")
+        p_leftroot.model.add_subsystem("icomp", comp, promotes_inputs=["a", "b", "c"], promotes_outputs=["x"])
+        p_leftroot.setup(force_alloc_complex=true)
+        p_leftroot.set_val("a", 1.0)
+        p_leftroot.set_val("b", -4.0)
+        p_leftroot.set_val("c", 3.0)
+        p_leftroot.run_model()
+
+        # Create a component that should find the right root of R(x) = x**2 - 4*x + 3 = 0, aka 3.
+        xguess = 2.5
+        xlower = 2.1
+        xupper = 10.0
+        p_rightroot = om.Problem()
+        icomp = GuessNonlinearImplicit(n, xguess, xlower, xupper)
+        comp = make_component(icomp)
+        comp.linear_solver = om.DirectSolver(assemble_jac=true)
+        comp.nonlinear_solver = om.NewtonSolver(solve_subsystems=true, iprint=2, err_on_non_converge=true)
+        comp.nonlinear_solver.linesearch = om.BoundsEnforceLS(bound_enforcement="scalar")
+        p_rightroot.model.add_subsystem("icomp", comp, promotes_inputs=["a", "b", "c"], promotes_outputs=["x"])
+        p_rightroot.setup(force_alloc_complex=true)
+        p_rightroot.set_val("a", 1.0)
+        p_rightroot.set_val("b", -4.0)
+        p_rightroot.set_val("c", 3.0)
+        p_rightroot.run_model()
+
+        # Test that the results are what we expect.
+        expected = 1 .* ones(n)
+        actual = PyArray(p_leftroot.get_val("x"))
+        @test actual ≈ expected
+
+        expected = 3 .* ones(n)
+        actual = PyArray(p_rightroot.get_val("x"))
+        @test actual ≈ expected
+
+        # Check that partials approximated by the complex-step method match the user-provided partials.
+        for p in [p_leftroot, p_rightroot]
+            cpd = pyconvert(Dict, p.check_partials(compact_print=true, out_stream=nothing, method="cs"))
+            for comp in keys(cpd)
+                for (pyvar, pywrt) in keys(cpd[comp])
+                    var = pyconvert(Any, pyvar)
+                    wrt = pyconvert(Any, pywrt)
+                    cpd_comp = pyconvert(PyDict{Tuple{String, String}}, cpd[comp])
+                    cpd_comp_var_wrt = pyconvert(PyDict{String}, cpd_comp[var, wrt])
+                    @test PyArray(cpd_comp_var_wrt["J_fwd"]) ≈ PyArray(cpd_comp_var_wrt["J_fd"])
+                end
+            end
+        end
     end
 end
